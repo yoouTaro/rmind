@@ -181,6 +181,15 @@ impl Db {
             conn.pragma_update(None, "user_version", VERSION)?;
         }
         conn.execute_batch(FORGE_SCHEMA)?;
+        // Suggestions from before Forge had modes: agents and the playbook are team ones.
+        let has_mode: bool = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('forge') WHERE name = 'mode'", [], |r| r.get::<_, i64>(0))? > 0;
+        if !has_mode {
+            conn.execute_batch(
+                "ALTER TABLE forge ADD COLUMN mode TEXT NOT NULL DEFAULT 'habits';
+                 UPDATE forge SET mode = 'team' WHERE kind = 'agent' OR title = 'Team playbook';
+                 ALTER TABLE forge_runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'habits';",
+            )?;
+        }
         Ok(Db { conn })
     }
 
@@ -434,8 +443,8 @@ impl Db {
 
     pub fn add_suggestion(&self, s: &Suggestion) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO forge (created, kind, scope, project, title, why, evidence, content, skill_name, status, target)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO forge (created, kind, scope, project, title, why, evidence, content, skill_name, status, target, mode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 s.created,
                 s.kind,
@@ -447,7 +456,8 @@ impl Db {
                 s.content,
                 s.skill_name,
                 s.status,
-                s.target
+                s.target,
+                s.mode
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -455,8 +465,15 @@ impl Db {
 
     /// Suggestions, newest first; `status` keeps only those.
     pub fn suggestions(&self, status: Option<&str>) -> Result<Vec<Suggestion>> {
-        let mut stmt = self.conn.prepare(&format!("{FORGE_COLUMNS} WHERE ?1 IS NULL OR status = ?1 ORDER BY id DESC"))?;
-        let rows = stmt.query_map([status], suggestion)?;
+        self.suggestions_of(None, status)
+    }
+
+    /// Suggestions from one Forge mode ("habits" or "team"), newest first.
+    pub fn suggestions_of(&self, mode: Option<&str>, status: Option<&str>) -> Result<Vec<Suggestion>> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{FORGE_COLUMNS} WHERE (?1 IS NULL OR mode = ?1) AND (?2 IS NULL OR status = ?2) ORDER BY id DESC"))?;
+        let rows = stmt.query_map([mode, status], suggestion)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -471,17 +488,17 @@ impl Db {
 
     pub fn add_run(&self, run: &Run) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO forge_runs (ts, suggestions, cost, error) VALUES (?1, ?2, ?3, ?4)",
-            params![run.ts, run.suggestions, run.cost, run.error],
+            "INSERT INTO forge_runs (ts, suggestions, cost, error, mode) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![run.ts, run.suggestions, run.cost, run.error, run.mode],
         )?;
         Ok(())
     }
 
-    pub fn last_run(&self) -> Result<Option<Run>> {
+    pub fn last_run(&self, mode: &str) -> Result<Option<Run>> {
         Ok(self
             .conn
-            .query_row("SELECT ts, suggestions, cost, error FROM forge_runs ORDER BY ts DESC LIMIT 1", [], |r| {
-                Ok(Run { ts: r.get(0)?, suggestions: r.get(1)?, cost: r.get(2)?, error: r.get(3)? })
+            .query_row("SELECT ts, suggestions, cost, error, mode FROM forge_runs WHERE mode = ?1 ORDER BY ts DESC LIMIT 1", [mode], |r| {
+                Ok(Run { ts: r.get(0)?, suggestions: r.get(1)?, cost: r.get(2)?, error: r.get(3)?, mode: r.get(4)? })
             })
             .optional()?)
     }
@@ -541,7 +558,7 @@ impl Db {
     }
 }
 
-const FORGE_COLUMNS: &str = "SELECT id, created, kind, scope, project, title, why, evidence, content, skill_name, status, target FROM forge";
+const FORGE_COLUMNS: &str = "SELECT id, created, kind, scope, project, title, why, evidence, content, skill_name, status, target, mode FROM forge";
 
 fn suggestion(r: &rusqlite::Row) -> rusqlite::Result<Suggestion> {
     let evidence: String = r.get(7)?;
@@ -558,6 +575,7 @@ fn suggestion(r: &rusqlite::Row) -> rusqlite::Result<Suggestion> {
         skill_name: r.get(9)?,
         status: r.get(10)?,
         target: r.get(11)?,
+        mode: r.get(12)?,
     })
 }
 

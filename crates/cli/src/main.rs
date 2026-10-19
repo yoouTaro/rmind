@@ -122,7 +122,8 @@ fn main() {
                 let n = forge::run(&db, if team { forge::Mode::Team } else { forge::Mode::Habits })?;
                 eprintln!("{n} new suggestions.\n");
             }
-            print!("{}", render::suggestions(&db.suggestions(Some("new"))?));
+            let mode = if team { forge::Mode::Team } else { forge::Mode::Habits };
+            print!("{}", render::suggestions(&db.suggestions_of(Some(mode.key()), Some("new"))?));
             Ok(())
         }),
         Cmd::Accept { id } => fresh().and_then(|db| {

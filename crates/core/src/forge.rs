@@ -45,10 +45,13 @@ pub struct Suggestion {
     pub status: String,
     /// Where it was written, once accepted.
     pub target: String,
+    /// The Forge mode that drafted it: "habits" or "team".
+    pub mode: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct Run {
+    pub mode: String,
     pub ts: String,
     pub suggestions: i64,
     pub cost: f64,
@@ -69,6 +72,15 @@ pub enum Mode {
     Team,
 }
 
+impl Mode {
+    pub fn key(self) -> &'static str {
+        match self {
+            Mode::Habits => "habits",
+            Mode::Team => "team",
+        }
+    }
+}
+
 /// Mine, draft, and store the new suggestions. Returns how many.
 pub fn run(db: &Db, mode: Mode) -> Result<usize> {
     let prompt = match mode {
@@ -79,14 +91,15 @@ pub fn run(db: &Db, mode: Mode) -> Result<usize> {
     match draft(&prompt) {
         Ok((suggestions, cost)) => {
             let n = suggestions.len();
-            for s in suggestions {
+            for mut s in suggestions {
+                s.mode = mode.key().into();
                 db.add_suggestion(&s)?;
             }
-            db.add_run(&Run { ts: started, suggestions: n as i64, cost, error: None })?;
+            db.add_run(&Run { mode: mode.key().into(), ts: started, suggestions: n as i64, cost, error: None })?;
             Ok(n)
         }
         Err(e) => {
-            db.add_run(&Run { ts: started, suggestions: 0, cost: 0.0, error: Some(e.to_string()) })?;
+            db.add_run(&Run { mode: mode.key().into(), ts: started, suggestions: 0, cost: 0.0, error: Some(e.to_string()) })?;
             Err(e)
         }
     }
@@ -241,6 +254,41 @@ pub fn mine_team(db: &Db) -> Result<String> {
         }
     }
     Ok(out)
+}
+
+/// An agent defined in ~/.claude/agents.
+#[derive(Debug, Clone)]
+pub struct Agent {
+    pub name: String,
+    pub path: PathBuf,
+    pub description: String,
+    pub model: String,
+    pub effort: String,
+    pub tools: String,
+    /// Read-only on disk.
+    pub locked: bool,
+}
+
+/// The agents in ~/.claude/agents, by name.
+pub fn agents() -> Vec<Agent> {
+    let dir = paths::claude_dir().join("agents");
+    agent_files()
+        .into_iter()
+        .map(|(name, text)| {
+            let field = |k: &str| {
+                text.lines()
+                    .skip(1)
+                    .take_while(|l| l.trim() != "---")
+                    .find_map(|l| l.strip_prefix(&format!("{k}:")))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            };
+            let path = dir.join(format!("{name}.md"));
+            let locked = std::fs::metadata(&path).is_ok_and(|m| m.permissions().readonly());
+            Agent { description: field("description"), model: field("model"), effort: field("effort"), tools: field("tools"), name, path, locked }
+        })
+        .collect()
 }
 
 /// (name, contents) of each agent in ~/.claude/agents.
@@ -478,6 +526,7 @@ fn draft(prompt: &str) -> Result<(Vec<Suggestion>, f64)> {
             skill_name: s(v, "skill_name"),
             status: "new".into(),
             target: String::new(),
+            mode: String::new(),
         })
         .filter(|s| !s.title.is_empty() && !s.content.is_empty())
         .collect();
@@ -538,22 +587,29 @@ pub fn accept(db: &Db, id: i64, content: Option<&str>) -> Result<PathBuf> {
         std::fs::create_dir_all(path.parent().ok_or("bad path")?)?;
         write_keeping_mode(&path, &format!("{}\n", s.content))?;
     } else {
-        let mut text = std::fs::read_to_string(&path).unwrap_or_default();
-        if !text.contains(HEADING) {
-            if !text.is_empty() && !text.ends_with("\n\n") {
-                text.push_str(if text.ends_with('\n') { "\n" } else { "\n\n" });
-            }
-            text.push_str(HEADING);
-            text.push_str("\n\n");
-        } else if !text.ends_with('\n') {
-            text.push('\n');
-        }
-        text.push_str(&s.content);
-        text.push('\n');
-        write_keeping_mode(&path, &text)?;
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        write_keeping_mode(&path, &add_rule(&text, &s.content))?;
     }
     db.set_suggestion(id, "accepted", &s.content, &path.to_string_lossy())?;
     Ok(path)
+}
+
+/// `text` with `rule` added at the end of rmind's section (made at the end
+/// of the file if missing), before any section that follows it.
+fn add_rule(text: &str, rule: &str) -> String {
+    let rule = format!("{}\n", rule.trim_end());
+    let Some(start) = text.find(HEADING) else {
+        let mut out = text.to_string();
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out.push_str(if out.ends_with('\n') { "\n" } else { "\n\n" });
+        }
+        return format!("{out}{HEADING}\n\n{rule}");
+    };
+    let body = start + HEADING.len();
+    let end = text[body..].find("\n## ").map_or(text.len(), |i| body + i + 1);
+    let (before, after) = text.split_at(end);
+    let before = before.trim_end_matches('\n');
+    if after.is_empty() { format!("{before}\n{rule}") } else { format!("{before}\n{rule}\n{after}") }
 }
 
 /// Write `path`, even if it's read-only, and keep its permissions as they
@@ -589,6 +645,15 @@ mod tests {
     }
 
     #[test]
+    fn rules_go_in_their_section() {
+        let fresh = add_rule("# Mine\n\n- keep\n", "- one");
+        assert_eq!(fresh, format!("# Mine\n\n- keep\n\n{HEADING}\n\n- one\n"));
+        assert_eq!(add_rule(&fresh, "- two"), format!("# Mine\n\n- keep\n\n{HEADING}\n\n- one\n- two\n"));
+        let with_next = format!("{HEADING}\n\n- one\n\n## Team playbook\n\n- scout\n");
+        assert_eq!(add_rule(&with_next, "- two"), format!("{HEADING}\n\n- one\n- two\n\n## Team playbook\n\n- scout\n"));
+    }
+
+    #[test]
     fn programs_skip_lookups() {
         assert_eq!(programs("cd ~/x && cargo build --release 2>&1 | tail -1"), ["cargo build"]);
         assert_eq!(programs("bun run dev; git push origin main"), ["bun run dev", "git push origin"]);
@@ -611,6 +676,7 @@ mod tests {
             skill_name: "deploy-prod".into(),
             status: "new".into(),
             target: String::new(),
+            mode: "habits".into(),
         };
         assert!(target(&s).unwrap().ends_with("skills/deploy-prod/SKILL.md"));
         s.kind = "agent".into();

@@ -47,7 +47,7 @@ rmind search objc2 RefCell borrow     # -p rsnap to filter by project
 rmind show <session> --around <message>
 rmind recent
 rmind usage --days 30
-rmind ui                              # the window: search, sessions, usage, Forge
+rmind ui                              # the window: Search, Sessions, Usage, Habits, Team
 rmind forge                           # draft suggestions; rmind forge --evidence shows what it mined
 rmind forge --team                    # design a team of agents
 rmind accept <id> / rmind dismiss <id>

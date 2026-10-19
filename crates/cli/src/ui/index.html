@@ -119,6 +119,14 @@ th:first-child, td:first-child { text-align: left; }
 .sugg .foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .sugg .where { color: var(--faint); font: 12px var(--mono); margin-right: auto; overflow-wrap: anywhere; }
 .sugg.done { opacity: .75; }
+.roster { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.agent { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.agent .desc { color: var(--muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.agent .tools { color: var(--faint); font: 11.5px var(--mono); }
+.agent .track { height: 3px; background: var(--raised); border-radius: 3px; overflow: hidden; margin-top: 2px; }
+.agent .track i { display: block; height: 100%; background: var(--accent); }
+.chip.warn { color: var(--warn); }
+@media (max-width: 760px) { .roster { grid-template-columns: 1fr; } }
 
 /* Session panel */
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 10; }
@@ -169,7 +177,8 @@ aside.panel.on { transform: none; }
       <a href="#search" data-tab="search">Search</a>
       <a href="#sessions" data-tab="sessions">Sessions</a>
       <a href="#usage" data-tab="usage">Usage</a>
-      <a href="#forge" data-tab="forge">Forge</a>
+      <a href="#habits" data-tab="habits">Habits</a>
+      <a href="#team" data-tab="team">Team</a>
     </nav>
     <div class="stats" id="stats"></div>
   </div>
@@ -225,11 +234,11 @@ function md(text) {
 const front = (text, key) => (String(text).match(new RegExp("^" + key + ":\\s*(.+)$", "m")) || [])[1] || "";
 
 // ---------- routing ----------
-const tabs = { search: Search, sessions: Sessions, usage: Usage, forge: Forge };
+const tabs = { search: Search, sessions: Sessions, usage: Usage, habits: Habits, team: Team };
 let stopTab = null;
 function route() {
   const [name, query] = (location.hash.slice(1) || "search").split("?");
-  const tab = tabs[name] ? name : "search";
+  const tab = tabs[name] ? name : name === "forge" ? "habits" : "search";
   document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.tab === tab));
   if (stopTab) stopTab();
   stopTab = null;
@@ -352,7 +361,7 @@ function Usage(params) {
       ${r.agents.length ? `<div class="box"><h2>Subagents</h2>
         <table><tr><th>Agent</th><th>Runs</th><th>Cost</th><th>Models</th></tr>
         ${r.agents.map(a => `<tr><td>${esc(a.type)}</td><td>${a.runs}</td><td>${money(a.cost)}</td><td style="color:var(--muted)">${a.models.map(m => esc(m.model.replace("claude-", ""))).join(", ")}</td></tr>`).join("")}
-        </table><div class="note">Agents you've defined but never used don't appear here. Forge a team to rework them.</div></div>` : ""}
+        </table><div class="note">See your agents and redesign them on the <a href="#team">Team</a> tab.</div></div>` : ""}
       <div class="box"><h2>By model</h2>
         <table><tr><th>Model</th><th>Cost</th><th>Output</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Cache hit</th></tr>
         ${r.models.map(m => { const fresh = m.input + m.cache_write, hit = fresh + m.cache_read ? m.cache_read / (fresh + m.cache_read) * 100 : 0;
@@ -366,29 +375,70 @@ function Usage(params) {
   draw();
 }
 
-// ---------- Forge ----------
-function Forge(params) {
+// ---------- Habits and Team (Forge) ----------
+const FORGE = {
+  habits: {
+    title: "Habits",
+    sub: "What you keep repeating or correcting, turned into CLAUDE.md rules and skills. Nothing is written until you accept.",
+    button: "Find habits",
+    started: "Looking for habits…",
+    empty: "Find habits to look for things worth turning into rules.",
+    idle: "Not run yet. A run sends a summary of your prompts to Claude and costs a few cents.",
+  },
+  team: {
+    title: "Team",
+    sub: "The agents Claude can hand work to, and how much each gets used. Forge a team to redesign them from how you actually delegate.",
+    button: "Forge a team",
+    started: "Designing your team…",
+    empty: "Forge a team to get suggestions for new or better agents.",
+    idle: "Not run yet. A run sends a summary of your delegations to Claude and costs a few cents.",
+  },
+};
+function Habits(params) { return ForgePage("habits", params); }
+function Team(params) { return ForgePage("team", params); }
+
+function roster(t) {
+  const maxCost = Math.max(0.01, ...t.agents.map(a => a.cost));
+  return `<div class="box" style="margin-top:22px"><h2>Your agents · ${t.agents.length}</h2>
+    <div class="roster">${t.agents.map(a => `
+      <div class="agent">
+        <div class="row" style="gap:6px"><b style="font-family:var(--mono);font-size:13.5px">${esc(a.name)}</b>
+          ${a.model ? `<span class="chip ${a.model === "haiku" ? "good" : a.model === "opus" ? "warn" : ""}">${esc(a.model)}</span>` : ""}
+          ${a.effort ? `<span class="chip">${esc(a.effort)}</span>` : ""}
+          ${a.locked ? `<span class="chip" title="Read-only on disk">locked</span>` : ""}
+          <span class="right" style="margin-left:auto;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums">${a.runs ? `${a.runs} runs · ${money(a.cost)}` : `<span style="color:var(--faint)">not used yet</span>`}</span></div>
+        <div class="desc">${esc(a.description)}</div>
+        <div class="tools">${esc(a.tools || "all tools")}</div>
+        <span class="track"><i style="width:${(a.cost / maxCost * 100).toFixed(1)}%"></i></span>
+      </div>`).join("") || `<div class="empty">No agents in ~/.claude/agents yet.</div>`}</div>
+    ${t.others.length ? `<div class="note">Built-in agents also used: ${t.others.map(o => `${esc(o.type)} (${o.runs} runs, ${money(o.cost)})`).join(" · ")}</div>` : ""}
+  </div>`;
+}
+
+function ForgePage(mode, params) {
+  const text = FORGE[mode];
   let show = params.get("show") || "new";
   let timer = null;
   const draw = async () => {
-    const f = await api("/api/forge");
+    const [f, team] = await Promise.all([api(`/api/forge?mode=${mode}`), mode === "team" ? api("/api/team") : null]);
+    const mine = f.running && f.running_mode === mode;
     const counts = { new: 0, accepted: 0, dismissed: 0 };
     f.suggestions.forEach(s => counts[s.status]++);
     const list = f.suggestions.filter(s => s.status === show);
     const last = f.last_run;
     main.innerHTML = `
       <div class="forgehead">
-        <div><h1>Forge</h1><p class="sub" style="margin:0;max-width:640px"><b>Find habits</b> turns what you keep repeating or correcting into CLAUDE.md rules and skills. <b>Forge a team</b> designs agents from how you actually delegate. Nothing is written until you accept.</p>
-          <div class="status">${f.running ? `<span class="spin"></span>Reading your history and asking Claude (Sonnet)… usually one to three minutes.`
+        <div><h1>${text.title}</h1><p class="sub" style="margin:0;max-width:640px">${text.sub}</p>
+          <div class="status">${mine ? `<span class="spin"></span>Reading your history and asking Claude (Sonnet)… usually one to three minutes.`
+            : f.running ? `<span class="spin"></span>Forge is busy on ${f.running_mode === "team" ? "Team" : "Habits"}; this one can run after.`
             : f.error ? `<span style="color:var(--bad)">Last run failed: ${esc(f.error)}</span>`
-            : last ? `Last run ${esc(last.time)} · ${last.suggestions} suggestions · ${money(last.cost)}` : "Not run yet. A run sends a summary of your prompts to Claude and costs a few cents."}</div>
+            : last ? `Last run ${esc(last.time)} · ${last.suggestions} suggestions · ${money(last.cost)}` : text.idle}</div>
         </div>
-        <div class="row">
-          <button class="btn" data-mode="team" ${f.running ? "disabled" : ""} title="Design a team of agents from how you delegate">Forge a team</button>
-          <button class="btn primary" data-mode="habits" ${f.running ? "disabled" : ""} title="Rules and skills from what you repeat and correct">${f.running ? "Forging…" : "Find habits"}</button>
-        </div>
+        <button class="btn primary" id="run" ${f.running ? "disabled" : ""}>${mine ? "Forging…" : text.button}</button>
       </div>
-      <div class="row" style="margin:22px 0 14px"><div class="seg" id="seg">${["new", "accepted", "dismissed"].map(k => `<button data-k="${k}" class="${k === show ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)} ${counts[k]}</button>`).join("")}</div></div>
+      ${team ? roster(team) : ""}
+      <div class="row" style="margin:22px 0 14px">${team ? `<h2 style="font-size:13px;color:var(--muted);margin:0 12px 0 0;font-weight:600">Suggestions</h2>` : ""}
+        <div class="seg" id="seg">${["new", "accepted", "dismissed"].map(k => `<button data-k="${k}" class="${k === show ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)} ${counts[k]}</button>`).join("")}</div></div>
       <div class="list" id="sugg">${list.length ? list.map(s => `
         <div class="sugg ${s.status !== "new" ? "done" : ""}" data-id="${s.id}">
           <div class="row"><span class="chip ${s.kind !== "rule" ? "accent" : ""}">${{ rule: "Rule", skill: "Skill", agent: "Agent" }[s.kind] || esc(s.kind)}</span>
@@ -404,13 +454,12 @@ function Forge(params) {
           <div class="foot"><span class="where">${s.status === "accepted" ? "Written to " : "Writes to "}${esc(s.target)}</span>
             ${s.status === "new" ? `<button class="btn" data-a="dismiss">Dismiss</button><button class="btn primary" data-a="accept">Accept</button>`
               : s.status === "dismissed" ? `<button class="btn" data-a="restore">Restore</button>` : ""}</div>
-        </div>`).join("") : `<div class="empty"><b>${show === "new" ? "No open suggestions" : "Nothing here yet"}</b>${show === "new" ? (f.running ? "They'll appear here when the run finishes." : "Run Forge to look for habits worth turning into rules.") : ""}</div>`}</div>`;
+        </div>`).join("") : `<div class="empty"><b>${show === "new" ? "No open suggestions" : "Nothing here yet"}</b>${show === "new" ? (mine ? "They'll appear here when the run finishes." : text.empty) : ""}</div>`}</div>`;
     main.querySelectorAll("textarea").forEach(t => { t.style.height = Math.min(420, t.scrollHeight + 4) + "px"; });
-    main.querySelectorAll("[data-mode]").forEach(b => b.onclick = async () => {
-      try { await api("/api/forge/run", { mode: b.dataset.mode }); toast(b.dataset.mode === "team" ? "Designing your team…" : "Looking for habits…"); draw(); }
-      catch (e) { toast(e.message, true); }
-    });
-    main.querySelectorAll("#seg button").forEach(b => b.onclick = () => { show = b.dataset.k; setQuery("forge", { show: show === "new" ? "" : show }); draw(); });
+    $("#run").onclick = async () => {
+      try { await api("/api/forge/run", { mode }); toast(text.started); draw(); } catch (e) { toast(e.message, true); }
+    };
+    main.querySelectorAll("#seg button").forEach(b => b.onclick = () => { show = b.dataset.k; setQuery(mode, { show: show === "new" ? "" : show }); draw(); });
     main.querySelectorAll(".sugg [data-a]").forEach(b => b.onclick = async () => {
       const card = b.closest(".sugg"), id = +card.dataset.id, action = b.dataset.a;
       try {

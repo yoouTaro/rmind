@@ -22,6 +22,8 @@ const PAGE: &str = include_str!("ui/index.html");
 
 struct Forging {
     running: AtomicBool,
+    /// The mode running, or that ran last.
+    mode: Mutex<String>,
     error: Mutex<Option<String>>,
 }
 
@@ -32,7 +34,7 @@ pub fn serve(port: u16, open: bool) -> crate::Result<()> {
     let token = token();
     let url = format!("http://127.0.0.1:{port}/");
     let mut db = Db::open_default()?;
-    let forging = Arc::new(Forging { running: AtomicBool::new(false), error: Mutex::new(None) });
+    let forging = Arc::new(Forging { running: AtomicBool::new(false), mode: Mutex::new(String::new()), error: Mutex::new(None) });
     println!("rmind is open at {url} (Ctrl-C to quit)");
     if open {
         let _ = std::process::Command::new("open").arg(&url).status();
@@ -136,13 +138,16 @@ fn api(db: &mut Db, request: &mut Request, forging: &Arc<Forging>) -> crate::Res
             })
         }
         (Method::Get, "/api/forge") => {
-            let run = db.last_run()?;
+            let mode = q("mode").unwrap_or("habits");
+            let run = db.last_run(mode)?;
             let agents_dir = paths::claude_dir().join("agents");
+            let this_mode = *forging.mode.lock().unwrap() == mode;
             json!({
                 "running": forging.running.load(Ordering::SeqCst),
-                "error": forging.error.lock().unwrap().clone(),
+                "running_mode": forging.mode.lock().unwrap().clone(),
+                "error": if this_mode { forging.error.lock().unwrap().clone() } else { None },
                 "last_run": run.map(|r| json!({"time": local_time(&r.ts), "suggestions": r.suggestions, "cost": r.cost, "error": r.error})),
-                "suggestions": db.suggestions(None)?.iter().map(|s| {
+                "suggestions": db.suggestions_of(Some(mode), None)?.iter().map(|s| {
                     let mut v = suggestion_json(s);
                     v["replaces"] = json!(s.kind == "agent" && s.status == "new" && agents_dir.join(format!("{}.md", s.skill_name)).exists());
                     v
@@ -156,6 +161,7 @@ fn api(db: &mut Db, request: &mut Request, forging: &Arc<Forging>) -> crate::Res
             *forging.error.lock().unwrap() = None;
             let forging = Arc::clone(forging);
             let mode = if body["mode"] == "team" { forge::Mode::Team } else { forge::Mode::Habits };
+            *forging.mode.lock().unwrap() = mode.key().into();
             std::thread::spawn(move || {
                 let result = Db::open_default().and_then(|db| forge::run(&db, mode));
                 if let Err(e) = result {
@@ -164,6 +170,24 @@ fn api(db: &mut Db, request: &mut Request, forging: &Arc<Forging>) -> crate::Res
                 forging.running.store(false, Ordering::SeqCst);
             });
             json!({"started": true})
+        }
+        (Method::Get, "/api/team") => {
+            let uses = db.agent_use(None)?;
+            let agents = forge::agents();
+            let defined: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+            json!({
+                "agents": agents.iter().map(|a| {
+                    let u = uses.iter().find(|u| u.agent_type == a.name);
+                    json!({
+                        "name": a.name, "description": a.description, "model": a.model, "effort": a.effort, "tools": a.tools,
+                        "path": a.path.to_string_lossy(), "locked": a.locked,
+                        "runs": u.map_or(0, |u| u.runs), "cost": u.map_or(0.0, |u| u.cost),
+                    })
+                }).collect::<Vec<_>>(),
+                "others": uses.iter().filter(|u| !defined.contains(&u.agent_type.as_str())).map(|u| json!({
+                    "type": u.agent_type, "runs": u.runs, "cost": u.cost,
+                })).collect::<Vec<_>>(),
+            })
         }
         (Method::Post, "/api/forge/accept") => {
             let id = body["id"].as_i64().ok_or("id is required")?;
