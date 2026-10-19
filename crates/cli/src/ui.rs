@@ -20,6 +20,15 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 const PAGE: &str = include_str!("ui/index.html");
 
+/// The page's own fonts (Geist, SIL Open Font License, see
+/// ui/fonts/OFL-Geist.txt) and icon, served from the binary so the window
+/// needs no network.
+const ASSETS: [(&str, &str, &[u8]); 3] = [
+    ("/fonts/Geist.ttf", "font/ttf", include_bytes!("ui/fonts/Geist.ttf")),
+    ("/fonts/GeistMono.ttf", "font/ttf", include_bytes!("ui/fonts/GeistMono.ttf")),
+    ("/favicon.svg", "image/svg+xml", include_bytes!("ui/favicon.svg")),
+];
+
 struct Forging {
     running: AtomicBool,
     /// The mode running, or that ran last.
@@ -47,6 +56,11 @@ pub fn serve(port: u16, open: bool) -> crate::Result<()> {
             Response::from_string(page.clone())
                 .with_header(header("Content-Type", "text/html; charset=utf-8"))
                 .with_header(header("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"))
+                .with_status_code(200)
+        } else if let Some((_, kind, bytes)) = ASSETS.iter().find(|(path, _, _)| *path == request.url()) {
+            Response::from_data(bytes.to_vec())
+                .with_header(header("Content-Type", kind))
+                .with_header(header("Cache-Control", "max-age=31536000, immutable"))
                 .with_status_code(200)
         } else if request.url().starts_with("/api/") {
             if header_value(&request, "X-Rmind-Token") != Some(token.as_str()) {

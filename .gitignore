@@ -4,3 +4,6 @@ dist/
 .claude/
 .impeccable/review/
 .impeccable/questions/
+.impeccable/questions/
+.impeccable/decision/
+.impeccable/review/
