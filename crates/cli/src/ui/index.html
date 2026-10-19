@@ -221,6 +221,9 @@ function md(text) {
   ).join("");
 }
 
+// A frontmatter field of an agent or skill file.
+const front = (text, key) => (String(text).match(new RegExp("^" + key + ":\\s*(.+)$", "m")) || [])[1] || "";
+
 // ---------- routing ----------
 const tabs = { search: Search, sessions: Sessions, usage: Usage, forge: Forge };
 let stopTab = null;
@@ -346,6 +349,10 @@ function Usage(params) {
           <div class="item" data-i="${i}" style="padding:10px 12px"><div class="meta"><span class="title" style="font-size:13px">${esc(s.title)}</span><span class="right">${money(s.cost)}</span></div>
           <div class="meta">${esc(s.project)} · ${s.prompts} prompts</div></div>`).join("")}</div></div>
       </div>
+      ${r.agents.length ? `<div class="box"><h2>Subagents</h2>
+        <table><tr><th>Agent</th><th>Runs</th><th>Cost</th><th>Models</th></tr>
+        ${r.agents.map(a => `<tr><td>${esc(a.type)}</td><td>${a.runs}</td><td>${money(a.cost)}</td><td style="color:var(--muted)">${a.models.map(m => esc(m.model.replace("claude-", ""))).join(", ")}</td></tr>`).join("")}
+        </table><div class="note">Agents you've defined but never used don't appear here. Forge a team to rework them.</div></div>` : ""}
       <div class="box"><h2>By model</h2>
         <table><tr><th>Model</th><th>Cost</th><th>Output</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Cache hit</th></tr>
         ${r.models.map(m => { const fresh = m.input + m.cache_write, hit = fresh + m.cache_read ? m.cache_read / (fresh + m.cache_read) * 100 : 0;
@@ -371,17 +378,23 @@ function Forge(params) {
     const last = f.last_run;
     main.innerHTML = `
       <div class="forgehead">
-        <div><h1>Forge</h1><p class="sub" style="margin:0;max-width:620px">Finds what you keep repeating or correcting in your sessions and drafts CLAUDE.md rules and skills for it. Nothing is written until you accept.</p>
+        <div><h1>Forge</h1><p class="sub" style="margin:0;max-width:640px"><b>Find habits</b> turns what you keep repeating or correcting into CLAUDE.md rules and skills. <b>Forge a team</b> designs agents from how you actually delegate. Nothing is written until you accept.</p>
           <div class="status">${f.running ? `<span class="spin"></span>Reading your history and asking Claude (Sonnet)… usually one to three minutes.`
             : f.error ? `<span style="color:var(--bad)">Last run failed: ${esc(f.error)}</span>`
             : last ? `Last run ${esc(last.time)} · ${last.suggestions} suggestions · ${money(last.cost)}` : "Not run yet. A run sends a summary of your prompts to Claude and costs a few cents."}</div>
         </div>
-        <button class="btn primary" id="run" ${f.running ? "disabled" : ""}>${f.running ? "Forging…" : last ? "Run again" : "Run Forge"}</button>
+        <div class="row">
+          <button class="btn" data-mode="team" ${f.running ? "disabled" : ""} title="Design a team of agents from how you delegate">Forge a team</button>
+          <button class="btn primary" data-mode="habits" ${f.running ? "disabled" : ""} title="Rules and skills from what you repeat and correct">${f.running ? "Forging…" : "Find habits"}</button>
+        </div>
       </div>
       <div class="row" style="margin:22px 0 14px"><div class="seg" id="seg">${["new", "accepted", "dismissed"].map(k => `<button data-k="${k}" class="${k === show ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)} ${counts[k]}</button>`).join("")}</div></div>
       <div class="list" id="sugg">${list.length ? list.map(s => `
         <div class="sugg ${s.status !== "new" ? "done" : ""}" data-id="${s.id}">
-          <div class="row"><span class="chip ${s.kind === "skill" ? "accent" : ""}">${s.kind === "skill" ? "Skill" : "Rule"}</span>
+          <div class="row"><span class="chip ${s.kind !== "rule" ? "accent" : ""}">${{ rule: "Rule", skill: "Skill", agent: "Agent" }[s.kind] || esc(s.kind)}</span>
+            ${s.kind === "agent" ? `<span class="chip" style="font-family:var(--mono)">${esc(s.skill_name)}</span>` : ""}
+            ${front(s.content, "model") ? `<span class="chip">${esc(front(s.content, "model"))}</span>` : ""}
+            ${s.replaces ? `<span class="chip" style="color:var(--warn)">Replaces existing</span>` : ""}
             <span class="chip">${s.scope === "global" ? "All projects" : esc(s.project.split("/").pop())}</span>
             ${s.status === "accepted" ? `<span class="chip good">Added</span>` : ""}</div>
           <h3>${esc(s.title)}</h3>
@@ -393,9 +406,10 @@ function Forge(params) {
               : s.status === "dismissed" ? `<button class="btn" data-a="restore">Restore</button>` : ""}</div>
         </div>`).join("") : `<div class="empty"><b>${show === "new" ? "No open suggestions" : "Nothing here yet"}</b>${show === "new" ? (f.running ? "They'll appear here when the run finishes." : "Run Forge to look for habits worth turning into rules.") : ""}</div>`}</div>`;
     main.querySelectorAll("textarea").forEach(t => { t.style.height = Math.min(420, t.scrollHeight + 4) + "px"; });
-    $("#run").onclick = async () => {
-      try { await api("/api/forge/run", {}); toast("Forge started"); draw(); } catch (e) { toast(e.message, true); }
-    };
+    main.querySelectorAll("[data-mode]").forEach(b => b.onclick = async () => {
+      try { await api("/api/forge/run", { mode: b.dataset.mode }); toast(b.dataset.mode === "team" ? "Designing your team…" : "Looking for habits…"); draw(); }
+      catch (e) { toast(e.message, true); }
+    });
     main.querySelectorAll("#seg button").forEach(b => b.onclick = () => { show = b.dataset.k; setQuery("forge", { show: show === "new" ? "" : show }); draw(); });
     main.querySelectorAll(".sugg [data-a]").forEach(b => b.onclick = async () => {
       const card = b.closest(".sugg"), id = +card.dataset.id, action = b.dataset.a;

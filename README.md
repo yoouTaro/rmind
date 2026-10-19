@@ -18,6 +18,12 @@ SQLite full-text index, then:
   right after interrupting Claude, "no, …", prompts you repeat, each
   project's commands) and asks Claude (Sonnet, one call, a few cents) to draft
   CLAUDE.md rules and skills. Nothing is written until you accept one.
+- **Forge a team** – designs a roster of agents (`~/.claude/agents/*.md`) from
+  how you actually delegate: every subagent run with its type, model, task and
+  cost, your current agents and which go unused, each project's commands, and
+  your model routing rule. Plus a "Team playbook" rule telling the lead which
+  agent to use when. Accepting an agent that replaces yours backs yours up as
+  `<name>.md.before-rmind`.
 - **UI** – `rmind ui` opens all of it in your browser: search, sessions,
   usage charts, and Forge suggestions to edit, accept or dismiss.
 
@@ -43,6 +49,7 @@ rmind recent
 rmind usage --days 30
 rmind ui                              # the window: search, sessions, usage, Forge
 rmind forge                           # draft suggestions; rmind forge --evidence shows what it mined
+rmind forge --team                    # design a team of agents
 rmind accept <id> / rmind dismiss <id>
 ```
 

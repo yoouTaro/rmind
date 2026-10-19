@@ -128,6 +128,14 @@ pub fn usage(r: &UsageReport, days: u32) -> String {
         }
         out.push('\n');
     }
+    if !r.agents.is_empty() {
+        out.push_str("Subagents                       runs      cost  models\n");
+        for a in &r.agents {
+            let models = a.models.iter().map(|(m, _)| m.trim_start_matches("claude-")).collect::<Vec<_>>().join(", ");
+            let _ = writeln!(out, "  {:<28} {:>5} {:>9}  {models}", a.agent_type, a.runs, format!("${:.2}", a.cost));
+        }
+        out.push('\n');
+    }
     if !r.top.is_empty() {
         out.push_str("Priciest sessions\n");
         for s in &r.top {

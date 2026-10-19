@@ -129,15 +129,24 @@ fn api(db: &mut Db, request: &mut Request, forging: &Arc<Forging>) -> crate::Res
                     "model": m, "cost": t.cost, "input": t.input, "output": t.output, "cache_read": t.cache_read, "cache_write": t.cache_write,
                 })).collect::<Vec<_>>(),
                 "top": r.top.iter().map(session_json).collect::<Vec<_>>(),
+                "agents": r.agents.iter().map(|a| json!({
+                    "type": a.agent_type, "runs": a.runs, "cost": a.cost,
+                    "models": a.models.iter().map(|(m, c)| json!({"model": m, "cost": c})).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
             })
         }
         (Method::Get, "/api/forge") => {
             let run = db.last_run()?;
+            let agents_dir = paths::claude_dir().join("agents");
             json!({
                 "running": forging.running.load(Ordering::SeqCst),
                 "error": forging.error.lock().unwrap().clone(),
                 "last_run": run.map(|r| json!({"time": local_time(&r.ts), "suggestions": r.suggestions, "cost": r.cost, "error": r.error})),
-                "suggestions": db.suggestions(None)?.iter().map(suggestion_json).collect::<Vec<_>>(),
+                "suggestions": db.suggestions(None)?.iter().map(|s| {
+                    let mut v = suggestion_json(s);
+                    v["replaces"] = json!(s.kind == "agent" && s.status == "new" && agents_dir.join(format!("{}.md", s.skill_name)).exists());
+                    v
+                }).collect::<Vec<_>>(),
             })
         }
         (Method::Post, "/api/forge/run") => {
@@ -146,8 +155,9 @@ fn api(db: &mut Db, request: &mut Request, forging: &Arc<Forging>) -> crate::Res
             }
             *forging.error.lock().unwrap() = None;
             let forging = Arc::clone(forging);
+            let mode = if body["mode"] == "team" { forge::Mode::Team } else { forge::Mode::Habits };
             std::thread::spawn(move || {
-                let result = Db::open_default().and_then(|db| forge::run(&db));
+                let result = Db::open_default().and_then(|db| forge::run(&db, mode));
                 if let Err(e) = result {
                     *forging.error.lock().unwrap() = Some(e.to_string());
                 }

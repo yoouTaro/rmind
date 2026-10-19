@@ -64,6 +64,9 @@ enum Cmd {
         /// List suggestions instead of making new ones
         #[arg(long)]
         list: bool,
+        /// Design a team of agents from how you delegate, instead of rules
+        #[arg(long)]
+        team: bool,
     },
     /// Write a Forge suggestion into place
     Accept { id: i64 },
@@ -109,14 +112,14 @@ fn main() {
             Ok(())
         }),
         Cmd::Index { quiet } => index(quiet),
-        Cmd::Forge { evidence, list } => fresh().and_then(|db| {
+        Cmd::Forge { evidence, list, team } => fresh().and_then(|db| {
             if evidence {
-                print!("{}", forge::mine(&db)?);
+                print!("{}", if team { forge::mine_team(&db)? } else { forge::mine(&db)? });
                 return Ok(());
             }
             if !list {
                 eprintln!("Mining your history and asking Claude (Sonnet) for suggestions; this takes a minute or two…");
-                let n = forge::run(&db)?;
+                let n = forge::run(&db, if team { forge::Mode::Team } else { forge::Mode::Habits })?;
                 eprintln!("{n} new suggestions.\n");
             }
             print!("{}", render::suggestions(&db.suggestions(Some("new"))?));

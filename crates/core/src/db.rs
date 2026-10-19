@@ -17,7 +17,7 @@ use std::time::{Duration, UNIX_EPOCH};
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Bump when the schema or what gets indexed changes; the index is rebuilt.
-const VERSION: i64 = 4;
+const VERSION: i64 = 6;
 
 const SCHEMA: &str = "
 CREATE TABLE files (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, size INTEGER NOT NULL);
@@ -45,6 +45,9 @@ CREATE TABLE usage (
     cost REAL NOT NULL
 );
 CREATE INDEX usage_file ON usage (file);
+CREATE TABLE agents (
+    file TEXT PRIMARY KEY, session TEXT NOT NULL, day TEXT NOT NULL, agent_type TEXT NOT NULL, description TEXT NOT NULL
+);
 CREATE INDEX usage_session ON usage (session);
 CREATE INDEX usage_day ON usage (day);
 ";
@@ -133,6 +136,28 @@ pub struct UsageReport {
     pub days: Vec<(String, f64)>,
     /// The priciest sessions.
     pub top: Vec<SessionInfo>,
+    pub agents: Vec<AgentUse>,
+}
+
+/// How one kind of subagent was used.
+#[derive(Debug, Clone)]
+pub struct AgentUse {
+    pub agent_type: String,
+    pub runs: i64,
+    pub cost: f64,
+    /// Models it ran on, most expensive first.
+    pub models: Vec<(String, f64)>,
+}
+
+/// One subagent run, for Forge.
+#[derive(Debug, Clone)]
+pub struct AgentRun {
+    pub day: String,
+    pub agent_type: String,
+    pub description: String,
+    pub model: String,
+    pub cost: f64,
+    pub cwd: String,
 }
 
 impl Db {
@@ -150,7 +175,7 @@ impl Db {
         if version != VERSION {
             conn.execute_batch(
                 "DROP TABLE IF EXISTS files; DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS msgs_fts;
-                 DROP TABLE IF EXISTS msgs; DROP TABLE IF EXISTS usage;",
+                 DROP TABLE IF EXISTS msgs; DROP TABLE IF EXISTS usage; DROP TABLE IF EXISTS agents;",
             )?;
             conn.execute_batch(SCHEMA)?;
             conn.pragma_update(None, "user_version", VERSION)?;
@@ -203,6 +228,26 @@ impl Db {
                 let cost = price::cost(&u.model, u.input, u.output, u.cache_read, u.cache_write);
                 usage.execute(params![key, log.session, day(&u.ts), u.model, u.input, u.output, u.cache_read, u.cache_write, cost])?;
             }
+        }
+        if log.subagent {
+            // What the subagent was and was asked, from the file beside its log.
+            let meta: serde_json::Value = std::fs::read(log.path.with_extension("meta.json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default();
+            tx.execute(
+                "INSERT OR REPLACE INTO agents (file, session, day, agent_type, description) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    key,
+                    log.session,
+                    day(&session.first_ts),
+                    // Older Claude Code versions didn't write the meta file.
+                    meta["agentType"].as_str().unwrap_or("unlabelled"),
+                    meta["description"].as_str().map(str::to_string).unwrap_or_else(|| {
+                        session.entries.iter().find(|e| e.role == Role::User).map(|e| parse::clip(&e.text, 200)).unwrap_or_default()
+                    })
+                ],
+            )?;
         }
         if !log.subagent && !session.first_ts.is_empty() {
             tx.execute("DELETE FROM msgs WHERE session = ?1", [&log.session])?;
@@ -362,7 +407,8 @@ impl Db {
             ))?
             .query_map([&since], session_info)?
             .collect::<rusqlite::Result<_>>()?;
-        Ok(UsageReport { since, cost, sessions, projects, models, days, top })
+        let agents = self.agent_use(Some(&since))?;
+        Ok(UsageReport { since, cost, sessions, projects, models, days, top, agents })
     }
 }
 
@@ -446,6 +492,55 @@ impl Db {
     }
 }
 
+impl Db {
+    /// Subagent use by type, since `since` (a day) if given.
+    pub fn agent_use(&self, since: Option<&str>) -> Result<Vec<AgentUse>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.agent_type, u.model, COUNT(DISTINCT a.file), COALESCE(SUM(u.cost), 0) FROM agents a
+             LEFT JOIN usage u ON u.file = a.file WHERE ?1 IS NULL OR a.day >= ?1
+             GROUP BY a.agent_type, u.model",
+        )?;
+        let rows: Vec<(String, Option<String>, i64, f64)> =
+            stmt.query_map([since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut by_type: Vec<AgentUse> = Vec::new();
+        for (agent_type, model, runs, cost) in rows {
+            let i = match by_type.iter().position(|a| a.agent_type == agent_type) {
+                Some(i) => i,
+                None => {
+                    by_type.push(AgentUse { agent_type, runs: 0, cost: 0.0, models: Vec::new() });
+                    by_type.len() - 1
+                }
+            };
+            let a = &mut by_type[i];
+            a.runs += runs;
+            a.cost += cost;
+            if let Some(m) = model {
+                a.models.push((m, cost));
+            }
+        }
+        for a in &mut by_type {
+            a.models.sort_by(|x, y| y.1.total_cmp(&x.1));
+        }
+        by_type.sort_by(|x, y| y.cost.total_cmp(&x.cost));
+        Ok(by_type)
+    }
+
+    /// The latest `limit` subagent runs, newest first.
+    pub fn agent_runs(&self, limit: usize) -> Result<Vec<AgentRun>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.day, a.agent_type, a.description,
+                    COALESCE((SELECT model FROM usage WHERE file = a.file GROUP BY model ORDER BY SUM(cost) DESC LIMIT 1), ''),
+                    COALESCE((SELECT SUM(cost) FROM usage WHERE file = a.file), 0),
+                    COALESCE(s.cwd, '')
+             FROM agents a LEFT JOIN sessions s ON s.id = a.session ORDER BY a.day DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |r| {
+            Ok(AgentRun { day: r.get(0)?, agent_type: r.get(1)?, description: r.get(2)?, model: r.get(3)?, cost: r.get(4)?, cwd: r.get(5)? })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+}
+
 const FORGE_COLUMNS: &str = "SELECT id, created, kind, scope, project, title, why, evidence, content, skill_name, status, target FROM forge";
 
 fn suggestion(r: &rusqlite::Row) -> rusqlite::Result<Suggestion> {
@@ -520,7 +615,8 @@ impl Log {
     }
 }
 
-/// `<folder>/<session>.jsonl` and `<folder>/<session>/subagents/*.jsonl`.
+/// `<folder>/<session>.jsonl`, `<folder>/<session>/subagents/*.jsonl` and
+/// `<folder>/<session>/subagents/workflows/<run>/*.jsonl`.
 fn find_logs(root: &Path) -> Vec<Log> {
     let mut logs = Vec::new();
     let Ok(folders) = std::fs::read_dir(root) else { return logs };
@@ -532,10 +628,17 @@ fn find_logs(root: &Path) -> Vec<Log> {
             if let Some(session) = name.strip_suffix(".jsonl") {
                 push_log(&mut logs, path.clone(), session.to_string(), false);
             } else if path.is_dir() {
-                let Ok(agents) = std::fs::read_dir(path.join("subagents")) else { continue };
-                for agent in agents.flatten() {
-                    if agent.file_name().to_string_lossy().ends_with(".jsonl") {
-                        push_log(&mut logs, agent.path(), name.clone(), true);
+                // Subagents, and the agents of workflows one level down.
+                let mut dirs = vec![path.join("subagents")];
+                if let Ok(flows) = std::fs::read_dir(path.join("subagents/workflows")) {
+                    dirs.extend(flows.flatten().map(|f| f.path()));
+                }
+                for dir in dirs {
+                    let Ok(agents) = std::fs::read_dir(dir) else { continue };
+                    for agent in agents.flatten() {
+                        if agent.file_name().to_string_lossy().ends_with(".jsonl") {
+                            push_log(&mut logs, agent.path(), name.clone(), true);
+                        }
                     }
                 }
             }
@@ -583,10 +686,15 @@ mod tests {
             ],
         );
         write(&projects.join("-p-rpet/s1/subagents/agent-x.jsonl"), &[reply("m2", "2026-10-01T01:00:07Z", "claude-haiku-5-5", "found it")]);
+        std::fs::write(projects.join("-p-rpet/s1/subagents/agent-x.meta.json"), r#"{"agentType":"Explore","description":"Find the timer"}"#).unwrap();
+        write(&projects.join("-p-rpet/s1/subagents/workflows/wf_1/agent-y.jsonl"), &[reply("m3", "2026-10-01T01:00:08Z", "claude-haiku-5-5", "ok")]);
 
         let mut db = Db::open(&root.join("index.db")).unwrap();
         let report = db.update(&projects, |_, _| {}).unwrap();
-        assert_eq!((report.files, report.changed), (2, 2));
+        assert_eq!((report.files, report.changed), (3, 3));
+        let agents = db.agent_use(None).unwrap();
+        assert_eq!(agents.iter().map(|a| (a.agent_type.as_str(), a.runs)).collect::<Vec<_>>().len(), 2);
+        assert!(agents.iter().any(|a| a.agent_type == "Explore" && a.runs == 1));
 
         let hits = db.search("refcell borrowed", None, 5).unwrap();
         assert_eq!(hits.len(), 1);
@@ -600,8 +708,8 @@ mod tests {
         assert!(db.search("\"OR NEAR(", None, 5).unwrap().is_empty());
 
         let s = db.session("s").unwrap().unwrap();
-        // 10 in + 100 out on Opus 5.5, plus 10 + 100 on Haiku 5.5 in the subagent.
-        let expected = (10.0 * 4.0 + 100.0 * 20.0 + 10.0 * 0.1 + 100.0 * 0.5) / 1e6;
+        // 10 in + 100 out on Opus 5.5, plus 10 + 100 on Haiku 5.5 in each of two subagents.
+        let expected = (10.0 * 4.0 + 100.0 * 20.0 + 2.0 * (10.0 * 0.1 + 100.0 * 0.5)) / 1e6;
         assert_eq!(s.prompts, 1);
         assert!((s.cost.unwrap() - expected).abs() < 1e-12, "{:?}", s.cost);
         assert_eq!(db.messages("s1").unwrap().len(), 2);
