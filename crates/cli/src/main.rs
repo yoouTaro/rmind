@@ -3,9 +3,11 @@
 mod mcp;
 mod render;
 mod setup;
+mod ui;
 
 use clap::{Parser, Subcommand};
 use rmind_core::db::Db;
+use rmind_core::forge;
 use rmind_core::paths;
 use std::io::{IsTerminal, Read, Write};
 
@@ -54,6 +56,27 @@ enum Cmd {
         #[arg(short, long)]
         quiet: bool,
     },
+    /// Suggest CLAUDE.md rules and skills from your habits
+    Forge {
+        /// Only print the evidence mined from your history (free)
+        #[arg(long)]
+        evidence: bool,
+        /// List suggestions instead of making new ones
+        #[arg(long)]
+        list: bool,
+    },
+    /// Write a Forge suggestion into place
+    Accept { id: i64 },
+    /// Drop a Forge suggestion
+    Dismiss { id: i64 },
+    /// Open the rmind window in your browser
+    Ui {
+        #[arg(short, long, default_value_t = 4777)]
+        port: u16,
+        /// Don't open the browser
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Hook it into Claude Code (MCP server + hooks)
     Setup,
     /// Unhook it from Claude Code (the index is kept)
@@ -86,6 +109,29 @@ fn main() {
             Ok(())
         }),
         Cmd::Index { quiet } => index(quiet),
+        Cmd::Forge { evidence, list } => fresh().and_then(|db| {
+            if evidence {
+                print!("{}", forge::mine(&db)?);
+                return Ok(());
+            }
+            if !list {
+                eprintln!("Mining your history and asking Claude (Sonnet) for suggestions; this takes a minute or two…");
+                let n = forge::run(&db)?;
+                eprintln!("{n} new suggestions.\n");
+            }
+            print!("{}", render::suggestions(&db.suggestions(Some("new"))?));
+            Ok(())
+        }),
+        Cmd::Accept { id } => fresh().and_then(|db| {
+            println!("Wrote {}", forge::accept(&db, id, None)?.display());
+            Ok(())
+        }),
+        Cmd::Dismiss { id } => fresh().and_then(|db| {
+            let s = db.suggestion(id)?.ok_or("no such suggestion")?;
+            db.set_suggestion(id, "dismissed", &s.content, "")?;
+            Ok(())
+        }),
+        Cmd::Ui { port, no_open } => ui::serve(port, !no_open),
         Cmd::Setup => setup::install(),
         Cmd::Uninstall => setup::uninstall(),
         Cmd::Mcp => mcp::serve(),

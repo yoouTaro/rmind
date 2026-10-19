@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rmind</title>
+<style>
+:root {
+  --bg: #0e0f11; --panel: #15161a; --raised: #1b1d22; --line: #26282e; --line-2: #32353c;
+  --text: #e7e8ea; --muted: #8d9099; --faint: #5d6069;
+  --accent: #8ea4ff; --accent-ink: #0e0f11; --accent-soft: rgba(142,164,255,.14);
+  --good: #6fd3a0; --bad: #ff8a80; --warn: #f2c46d;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 10px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f7f8; --panel: #ffffff; --raised: #f1f1f3; --line: #e4e4e8; --line-2: #d6d6dc;
+    --text: #17181b; --muted: #676a73; --faint: #9a9da5;
+    --accent: #4257d6; --accent-ink: #fff; --accent-soft: rgba(66,87,214,.1);
+    --good: #1c8a55; --bad: #c8372d; --warn: #9a6b00;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Noto Sans Khmer", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--accent); }
+
+header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+.bar { max-width: 1120px; margin: 0 auto; padding: 0 24px; height: 56px; display: flex; align-items: center; gap: 28px; }
+.brand { font-weight: 650; letter-spacing: -.01em; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.brand i { width: 9px; height: 9px; border-radius: 3px; background: var(--accent); display: inline-block; }
+nav { display: flex; gap: 2px; }
+nav a { text-decoration: none; color: var(--muted); padding: 6px 12px; border-radius: 8px; font-weight: 500; }
+nav a:hover { color: var(--text); background: var(--raised); }
+nav a.on { color: var(--text); background: var(--raised); }
+.stats { margin-left: auto; color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+main { max-width: 1120px; margin: 0 auto; padding: 28px 24px 80px; }
+h1 { font-size: 22px; letter-spacing: -.02em; margin: 0 0 4px; font-weight: 650; }
+.sub { color: var(--muted); margin: 0 0 22px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.field { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 14px; height: 44px; display: flex; align-items: center; gap: 10px; transition: border-color .15s; }
+.field:focus-within { border-color: var(--accent); }
+.field input { border: 0; outline: 0; background: transparent; width: 100%; height: 100%; }
+.field.big { height: 52px; font-size: 16px; flex: 1; min-width: 260px; }
+.field.small { width: 200px; }
+.field svg { flex: none; color: var(--faint); }
+
+.seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
+.seg button { border: 0; background: transparent; color: var(--muted); padding: 5px 12px; border-radius: 6px; font-weight: 500; font-size: 13px; }
+.seg button.on { background: var(--raised); color: var(--text); box-shadow: 0 0 0 1px var(--line-2) inset; }
+
+.btn { border: 1px solid var(--line-2); background: var(--raised); color: var(--text); border-radius: 8px; padding: 7px 14px; font-weight: 550; font-size: 13px; transition: transform .1s, background .15s; }
+.btn:hover { background: var(--line); }
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .5; cursor: default; transform: none; }
+
+.list { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+.item { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 13px 16px; cursor: pointer; transition: border-color .15s, background .15s; }
+.item:hover { border-color: var(--line-2); background: color-mix(in srgb, var(--panel) 70%, var(--raised)); }
+.meta { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12.5px; flex-wrap: wrap; }
+.meta .title { color: var(--text); font-weight: 560; font-size: 14px; }
+.meta .right { margin-left: auto; font-variant-numeric: tabular-nums; }
+.chip { font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--raised); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.chip.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.chip.good { color: var(--good); }
+.snippet { margin-top: 6px; color: var(--muted); overflow-wrap: anywhere; }
+.snippet mark, .text mark { background: var(--accent-soft); color: var(--text); border-radius: 3px; padding: 0 2px; }
+.role { font-family: var(--mono); font-size: 11px; color: var(--faint); margin-right: 6px; text-transform: uppercase; letter-spacing: .04em; }
+.empty { color: var(--muted); text-align: center; padding: 60px 20px; }
+.empty b { color: var(--text); display: block; font-size: 15px; margin-bottom: 4px; }
+.tips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 14px; }
+
+/* Usage */
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.card .k { color: var(--muted); font-size: 12.5px; }
+.card .v { font-size: 24px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.card .n { color: var(--faint); font-size: 12px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px; }
+.box h2 { font-size: 13px; font-weight: 600; margin: 0 0 12px; color: var(--muted); }
+.chart { display: flex; align-items: flex-end; gap: 3px; height: 160px; }
+.chart .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; min-width: 3px; position: relative; }
+.chart .col i { display: block; background: var(--accent); border-radius: 3px 3px 1px 1px; min-height: 2px; opacity: .85; transition: opacity .15s; }
+.chart .col:hover i { opacity: 1; }
+.chart .col:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--raised); border: 1px solid var(--line-2); padding: 3px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; z-index: 2; }
+.axis { display: flex; justify-content: space-between; color: var(--faint); font-size: 11.5px; margin-top: 6px; }
+.two { display: grid; grid-template-columns: 1.1fr .9fr; gap: 12px; }
+.hbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 5px 0; }
+.hbar .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbar .num { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; text-align: right; }
+.hbar .track { grid-column: 1 / -1; height: 4px; background: var(--raised); border-radius: 4px; overflow: hidden; }
+.hbar .track i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+th { text-align: right; color: var(--faint); font-weight: 500; font-size: 12px; padding: 4px 0 8px; }
+td { text-align: right; padding: 7px 0; border-top: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; }
+.note { color: var(--faint); font-size: 12px; margin-top: 8px; }
+
+/* Forge */
+.forgehead { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.status { color: var(--muted); font-size: 13px; margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+.spin { width: 14px; height: 14px; border: 2px solid var(--line-2); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.sugg { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+.sugg h3 { margin: 8px 0 4px; font-size: 16px; letter-spacing: -.01em; }
+.sugg .why { color: var(--muted); margin: 0 0 10px; }
+.sugg blockquote { margin: 0 0 6px; padding: 2px 0 2px 12px; border-left: 2px solid var(--line-2); color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.sugg textarea { width: 100%; margin-top: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 12.5px/1.55 var(--mono); resize: vertical; min-height: 70px; outline: 0; }
+.sugg textarea:focus { border-color: var(--accent); }
+.sugg .foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.sugg .where { color: var(--faint); font: 12px var(--mono); margin-right: auto; overflow-wrap: anywhere; }
+.sugg.done { opacity: .75; }
+
+/* Session panel */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 10; }
+.scrim.on { opacity: 1; pointer-events: auto; }
+aside.panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--bg); border-left: 1px solid var(--line); z-index: 11; transform: translateX(102%); transition: transform .28s cubic-bezier(.2,.8,.2,1); display: flex; flex-direction: column; }
+aside.panel.on { transform: none; }
+.phead { padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
+.phead h2 { margin: 0 0 4px; font-size: 17px; letter-spacing: -.01em; }
+.phead .x { float: right; border: 0; background: var(--raised); border-radius: 8px; width: 30px; height: 30px; color: var(--muted); }
+.pbody { overflow-y: auto; padding: 16px 22px 40px; flex: 1; }
+.msg { margin: 0 0 14px; }
+.msg .head { font-size: 11.5px; color: var(--faint); margin-bottom: 4px; display: flex; gap: 8px; }
+.msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user .text { background: var(--accent-soft); border-radius: 12px; padding: 10px 14px; }
+.msg.tool .text { font: 12px/1.5 var(--mono); color: var(--muted); max-height: 4.6em; overflow: hidden; cursor: pointer; mask-image: linear-gradient(#000 60%, transparent); }
+.msg.tool.open .text { max-height: none; mask-image: none; }
+.msg.error .text { font: 12px/1.5 var(--mono); color: var(--bad); }
+.msg.thinking .text { color: var(--muted); font-style: italic; font-size: 13px; max-height: 4.5em; overflow: hidden; cursor: pointer; mask-image: linear-gradient(#000 50%, transparent); }
+.msg.thinking.open .text { max-height: none; mask-image: none; }
+.msg.summary .text { border: 1px dashed var(--line-2); border-radius: 10px; padding: 10px 14px; font-size: 13px; color: var(--muted); max-height: 14em; overflow: auto; }
+.msg.focus { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 10px; }
+.msg pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font: 12px/1.5 var(--mono); white-space: pre; }
+.msg code { font: 12.5px var(--mono); background: var(--raised); padding: 1px 5px; border-radius: 5px; }
+.msg pre code { background: none; padding: 0; }
+.outline .o { display: flex; gap: 12px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
+.outline .o:hover { background: var(--panel); }
+.outline .o time { color: var(--faint); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.outline .o span { overflow-wrap: anywhere; }
+.more { display: block; margin: 6px auto 16px; }
+
+.toast { position: fixed; bottom: 22px; left: 50%; transform: translate(-50%, 20px); background: var(--raised); border: 1px solid var(--line-2); padding: 10px 16px; border-radius: 10px; opacity: 0; transition: .25s; z-index: 20; max-width: 90vw; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+.toast.bad { color: var(--bad); }
+
+@media (max-width: 760px) {
+  .cards { grid-template-columns: repeat(2, 1fr); }
+  .two { grid-template-columns: 1fr; }
+  .stats { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <div class="brand"><i></i>rmind</div>
+    <nav>
+      <a href="#search" data-tab="search">Search</a>
+      <a href="#sessions" data-tab="sessions">Sessions</a>
+      <a href="#usage" data-tab="usage">Usage</a>
+      <a href="#forge" data-tab="forge">Forge</a>
+    </nav>
+    <div class="stats" id="stats"></div>
+  </div>
+</header>
+<main id="main"></main>
+<div class="scrim" id="scrim"></div>
+<aside class="panel" id="panel" aria-hidden="true"></aside>
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN = "__RMIND_TOKEN__";
+const $ = (s, el = document) => el.querySelector(s);
+const main = $("#main");
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "X-Rmind-Token": TOKEN, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  // rmind was restarted, so this page's token is stale: load the new page.
+  if (res.status === 403) { location.reload(); throw new Error("reloading"); }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const marks = s => esc(s).replace(/\*\*/g, "").replace(/«/g, "<mark>").replace(/»/g, "</mark>");
+const money = n => n == null ? "" : "$" + (n >= 100 ? n.toFixed(0) : n.toFixed(2));
+const big = n => n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n);
+const debounce = (f, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => f(...a), ms); }; };
+const SEARCH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+
+function toast(text, bad) {
+  const t = $("#toast");
+  t.textContent = text;
+  t.className = "toast on" + (bad ? " bad" : "");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.className = "toast", 3200);
+}
+
+// Light markdown for Claude's replies: code blocks, inline code, bold.
+function md(text) {
+  const parts = String(text).split(/```[^\n]*\n?/);
+  return parts.map((p, i) => i % 2
+    ? `<pre><code>${esc(p.replace(/\n$/, ""))}</code></pre>`
+    : esc(p).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+  ).join("");
+}
+
+// ---------- routing ----------
+const tabs = { search: Search, sessions: Sessions, usage: Usage, forge: Forge };
+let stopTab = null;
+function route() {
+  const [name, query] = (location.hash.slice(1) || "search").split("?");
+  const tab = tabs[name] ? name : "search";
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.tab === tab));
+  if (stopTab) stopTab();
+  stopTab = null;
+  closePanel();
+  main.innerHTML = "";
+  stopTab = tabs[tab](new URLSearchParams(query || "")) || null;
+}
+function setQuery(name, params) {
+  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+  history.replaceState(null, "", "#" + name + (q ? "?" + q : ""));
+}
+window.addEventListener("hashchange", route);
+
+// ---------- Search ----------
+function Search(params) {
+  main.innerHTML = `
+    <h1>Search your history</h1>
+    <p class="sub">Every prompt, reply, command and fix from all your Claude Code sessions.</p>
+    <div class="row">
+      <label class="field big">${SEARCH_ICON}<input id="q" placeholder="e.g. khmer font fallback, RefCell borrow, deploy staging" autocomplete="off"></label>
+      <label class="field small"><input id="p" placeholder="Project filter" autocomplete="off"></label>
+    </div>
+    <div class="list" id="results"></div>`;
+  const q = $("#q"), p = $("#p"), out = $("#results");
+  q.value = params.get("q") || "";
+  p.value = params.get("project") || "";
+  let seq = 0;
+  const run = async () => {
+    setQuery("search", { q: q.value, project: p.value });
+    if (!q.value.trim()) {
+      out.innerHTML = `<div class="empty"><b>Ask your past self</b>Type a few words: an error, a feature, a library.
+        <div class="tips">${["khmer font", "deploy staging", "objc2 menu bar", "postgis"].map(t => `<button class="btn" data-t="${t}">${t}</button>`).join("")}</div></div>`;
+      out.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { q.value = b.dataset.t; run(); });
+      return;
+    }
+    const mine = ++seq;
+    const data = await api(`/api/search?q=${encodeURIComponent(q.value)}&project=${encodeURIComponent(p.value)}`);
+    if (mine !== seq) return;
+    out.innerHTML = data.hits.length ? data.hits.map((h, i) => `
+      <div class="item" data-i="${i}">
+        <div class="meta"><span class="chip accent">${esc(h.project)}</span><span class="title">${esc(h.title)}</span><span class="right">${esc(h.time)}</span></div>
+        <div class="snippet"><span class="role">${esc(h.role)}</span>${marks(h.snippet)}</div>
+      </div>`).join("") : `<div class="empty"><b>Nothing found</b>Try fewer or different words.</div>`;
+    out.querySelectorAll(".item").forEach(el => el.onclick = () => { const h = data.hits[el.dataset.i]; openSession(h.session, h.uuid); });
+  };
+  const later = debounce(run, 220);
+  q.oninput = later; p.oninput = later;
+  q.focus();
+  run();
+}
+
+// ---------- Sessions ----------
+function Sessions(params) {
+  main.innerHTML = `
+    <h1>Sessions</h1>
+    <p class="sub">Newest first. Open one to see every prompt, then jump into any part.</p>
+    <div class="row"><label class="field big">${SEARCH_ICON}<input id="p" placeholder="Filter by project or folder" autocomplete="off"></label></div>
+    <div class="list" id="list"></div>`;
+  const p = $("#p"), out = $("#list");
+  p.value = params.get("project") || "";
+  const run = async () => {
+    setQuery("sessions", { project: p.value });
+    const data = await api(`/api/recent?limit=150&project=${encodeURIComponent(p.value)}`);
+    out.innerHTML = data.sessions.length ? data.sessions.map((s, i) => `
+      <div class="item" data-i="${i}">
+        <div class="meta"><span class="chip accent">${esc(s.project)}</span><span class="title">${esc(s.title)}</span>
+          <span class="right">${s.prompts} prompts · ${money(s.cost)} · ${esc(s.last)}</span></div>
+        ${s.last_prompt ? `<div class="snippet"><span class="role">last</span>${esc(s.last_prompt.slice(0, 220))}</div>` : ""}
+      </div>`).join("") : `<div class="empty"><b>No sessions</b>Nothing matches that filter.</div>`;
+    out.querySelectorAll(".item").forEach(el => el.onclick = () => openSession(data.sessions[el.dataset.i].id));
+  };
+  p.oninput = debounce(run, 200);
+  run();
+}
+
+// ---------- Usage ----------
+function Usage(params) {
+  let days = +(params.get("days") || 30);
+  const draw = async () => {
+    setQuery("usage", { days: days === 30 ? "" : days });
+    const r = await api(`/api/usage?days=${days}`);
+    const active = r.days.length;
+    // Show quiet days as gaps, from the first day with usage to today.
+    if (r.days.length && days <= 365) {
+      const have = Object.fromEntries(r.days.map(d => [d.day, d.cost]));
+      const all = [], day = new Date(r.days[0].day + "T12:00:00"), today = new Date();
+      for (; day <= today; day.setDate(day.getDate() + 1)) {
+        const key = day.toLocaleDateString("sv-SE");
+        all.push({ day: key, cost: have[key] || 0 });
+      }
+      r.days = all;
+    }
+    const spanDays = Math.max(1, active);
+    const maxDay = Math.max(0.01, ...r.days.map(d => d.cost));
+    const maxProject = Math.max(0.01, ...r.projects.map(p => p.cost));
+    const top = r.models[0];
+    main.innerHTML = `
+      <div class="row" style="justify-content:space-between">
+        <div><h1>Usage</h1><p class="sub" style="margin:0">What your Claude Code work costs at API prices, subagents included.</p></div>
+        <div class="seg" id="seg">${[[7, "7d"], [30, "30d"], [90, "90d"], [365, "1y"], [3650, "All"]].map(([d, l]) => `<button data-d="${d}" class="${d === days ? "on" : ""}">${l}</button>`).join("")}</div>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="k">Total</div><div class="v">${money(r.cost)}</div><div class="n">since ${esc(r.since)}</div></div>
+        <div class="card"><div class="k">Sessions</div><div class="v">${r.sessions}</div><div class="n">${r.projects.length} folders</div></div>
+        <div class="card"><div class="k">Per active day</div><div class="v">${money(r.cost / spanDays)}</div><div class="n">${active} active days</div></div>
+        <div class="card"><div class="k">Top model</div><div class="v" style="font-size:17px;padding-top:6px">${esc(top ? top.model.replace("claude-", "") : "–")}</div><div class="n">${top ? money(top.cost) : ""}</div></div>
+      </div>
+      <div class="box"><h2>By day</h2>
+        ${r.days.length ? `<div class="chart">${r.days.map(d => `<div class="col" data-tip="${esc(d.day)} · ${money(d.cost)}"><i style="height:${(d.cost / maxDay * 100).toFixed(1)}%"></i></div>`).join("")}</div>
+        <div class="axis"><span>${esc(r.days[0].day)}</span><span>${esc(r.days[r.days.length - 1].day)}</span></div>` : `<div class="empty">No usage in this period.</div>`}
+      </div>
+      <div class="two">
+        <div class="box"><h2>By project</h2>${r.projects.slice(0, 14).map(p => `
+          <div class="hbar"><span class="name" title="${esc(p.cwd)}">${esc(p.project)}</span><span class="num">${money(p.cost)} · ${p.sessions}</span>
+          <span class="track"><i style="width:${(p.cost / maxProject * 100).toFixed(1)}%"></i></span></div>`).join("")}</div>
+        <div class="box"><h2>Priciest sessions</h2><div class="list" style="margin:0">${r.top.map((s, i) => `
+          <div class="item" data-i="${i}" style="padding:10px 12px"><div class="meta"><span class="title" style="font-size:13px">${esc(s.title)}</span><span class="right">${money(s.cost)}</span></div>
+          <div class="meta">${esc(s.project)} · ${s.prompts} prompts</div></div>`).join("")}</div></div>
+      </div>
+      <div class="box"><h2>By model</h2>
+        <table><tr><th>Model</th><th>Cost</th><th>Output</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Cache hit</th></tr>
+        ${r.models.map(m => { const fresh = m.input + m.cache_write, hit = fresh + m.cache_read ? m.cache_read / (fresh + m.cache_read) * 100 : 0;
+          return `<tr><td>${esc(m.model)}</td><td>${money(m.cost)}</td><td>${big(m.output)}</td><td>${big(m.input)}</td><td>${big(m.cache_read)}</td><td>${big(m.cache_write)}</td><td>${hit.toFixed(0)}%</td></tr>`; }).join("")}
+        </table>
+        <div class="note">On a subscription you don't pay these prices; they show what the work would cost on the API, which is still the fairest way to compare sessions.</div>
+      </div>`;
+    main.querySelectorAll("#seg button").forEach(b => b.onclick = () => { days = +b.dataset.d; draw(); });
+    main.querySelectorAll(".two .item").forEach(el => el.onclick = () => openSession(r.top[el.dataset.i].id));
+  };
+  draw();
+}
+
+// ---------- Forge ----------
+function Forge(params) {
+  let show = params.get("show") || "new";
+  let timer = null;
+  const draw = async () => {
+    const f = await api("/api/forge");
+    const counts = { new: 0, accepted: 0, dismissed: 0 };
+    f.suggestions.forEach(s => counts[s.status]++);
+    const list = f.suggestions.filter(s => s.status === show);
+    const last = f.last_run;
+    main.innerHTML = `
+      <div class="forgehead">
+        <div><h1>Forge</h1><p class="sub" style="margin:0;max-width:620px">Finds what you keep repeating or correcting in your sessions and drafts CLAUDE.md rules and skills for it. Nothing is written until you accept.</p>
+          <div class="status">${f.running ? `<span class="spin"></span>Reading your history and asking Claude (Sonnet)… usually one to three minutes.`
+            : f.error ? `<span style="color:var(--bad)">Last run failed: ${esc(f.error)}</span>`
+            : last ? `Last run ${esc(last.time)} · ${last.suggestions} suggestions · ${money(last.cost)}` : "Not run yet. A run sends a summary of your prompts to Claude and costs a few cents."}</div>
+        </div>
+        <button class="btn primary" id="run" ${f.running ? "disabled" : ""}>${f.running ? "Forging…" : last ? "Run again" : "Run Forge"}</button>
+      </div>
+      <div class="row" style="margin:22px 0 14px"><div class="seg" id="seg">${["new", "accepted", "dismissed"].map(k => `<button data-k="${k}" class="${k === show ? "on" : ""}">${k[0].toUpperCase() + k.slice(1)} ${counts[k]}</button>`).join("")}</div></div>
+      <div class="list" id="sugg">${list.length ? list.map(s => `
+        <div class="sugg ${s.status !== "new" ? "done" : ""}" data-id="${s.id}">
+          <div class="row"><span class="chip ${s.kind === "skill" ? "accent" : ""}">${s.kind === "skill" ? "Skill" : "Rule"}</span>
+            <span class="chip">${s.scope === "global" ? "All projects" : esc(s.project.split("/").pop())}</span>
+            ${s.status === "accepted" ? `<span class="chip good">Added</span>` : ""}</div>
+          <h3>${esc(s.title)}</h3>
+          <p class="why">${esc(s.why)}</p>
+          ${s.evidence.slice(0, 3).map(e => `<blockquote>${esc(e)}</blockquote>`).join("")}
+          <textarea spellcheck="false" ${s.status !== "new" ? "readonly" : ""}>${esc(s.content)}</textarea>
+          <div class="foot"><span class="where">${s.status === "accepted" ? "Written to " : "Writes to "}${esc(s.target)}</span>
+            ${s.status === "new" ? `<button class="btn" data-a="dismiss">Dismiss</button><button class="btn primary" data-a="accept">Accept</button>`
+              : s.status === "dismissed" ? `<button class="btn" data-a="restore">Restore</button>` : ""}</div>
+        </div>`).join("") : `<div class="empty"><b>${show === "new" ? "No open suggestions" : "Nothing here yet"}</b>${show === "new" ? (f.running ? "They'll appear here when the run finishes." : "Run Forge to look for habits worth turning into rules.") : ""}</div>`}</div>`;
+    main.querySelectorAll("textarea").forEach(t => { t.style.height = Math.min(420, t.scrollHeight + 4) + "px"; });
+    $("#run").onclick = async () => {
+      try { await api("/api/forge/run", {}); toast("Forge started"); draw(); } catch (e) { toast(e.message, true); }
+    };
+    main.querySelectorAll("#seg button").forEach(b => b.onclick = () => { show = b.dataset.k; setQuery("forge", { show: show === "new" ? "" : show }); draw(); });
+    main.querySelectorAll(".sugg [data-a]").forEach(b => b.onclick = async () => {
+      const card = b.closest(".sugg"), id = +card.dataset.id, action = b.dataset.a;
+      try {
+        if (action === "accept") {
+          const r = await api("/api/forge/accept", { id, content: $("textarea", card).value });
+          toast("Added to " + r.target.replace(/^\/Users\/[^/]+/, "~"));
+        } else {
+          await api(`/api/forge/${action}`, { id });
+          toast(action === "dismiss" ? "Dismissed" : "Restored");
+        }
+        draw();
+      } catch (e) { toast(e.message, true); }
+    });
+    clearTimeout(timer);
+    if (f.running) timer = setTimeout(draw, 2500);
+  };
+  draw();
+  return () => clearTimeout(timer);
+}
+
+// ---------- Session panel ----------
+const panel = $("#panel"), scrim = $("#scrim");
+function closePanel() { panel.classList.remove("on"); scrim.classList.remove("on"); panel.setAttribute("aria-hidden", "true"); }
+scrim.onclick = closePanel;
+document.addEventListener("keydown", e => { if (e.key === "Escape") closePanel(); });
+
+async function openSession(id, around) {
+  panel.classList.add("on"); scrim.classList.add("on"); panel.setAttribute("aria-hidden", "false");
+  panel.innerHTML = `<div class="pbody"><div class="status"><span class="spin"></span>Loading…</div></div>`;
+  try {
+    if (around) await showWindow(id, `around=${encodeURIComponent(around)}&before=12&limit=50`);
+    else await showOutline(id);
+  } catch (e) { panel.innerHTML = `<div class="pbody">${esc(e.message)}</div>`; }
+}
+
+function panelHead(s, total, extra) {
+  return `<div class="phead"><button class="x" id="x" aria-label="Close">✕</button>
+    <h2>${esc(s.title)}</h2>
+    <div class="meta"><span class="chip accent">${esc(s.project)}</span><span>${esc(s.first)} → ${esc(s.last)}</span><span>${s.prompts} prompts · ${total} messages</span>${s.cost != null ? `<span>${money(s.cost)}</span>` : ""}</div>
+    <div class="meta" style="margin-top:6px"><span style="font-family:var(--mono);font-size:11.5px">${esc(s.cwd)}</span>${extra || ""}</div></div>`;
+}
+
+async function showOutline(id) {
+  const d = await api(`/api/session?id=${encodeURIComponent(id)}&outline=1`);
+  panel.innerHTML = panelHead(d.session, d.total, `<span class="right"><button class="btn" id="read">Read from the start</button></span>`) +
+    `<div class="pbody"><div class="outline">${d.outline.map((m, i) => `<div class="o" data-i="${i}"><time>${esc(m.time.slice(5))}</time><span>${m.role === "summary" ? "<span class=role>summary</span>" : ""}${esc(m.text)}</span></div>`).join("") || `<div class="empty">No prompts in this session.</div>`}</div></div>`;
+  $("#x").onclick = closePanel;
+  $("#read").onclick = () => showWindow(id, "from=0&limit=60");
+  panel.querySelectorAll(".o").forEach(el => el.onclick = () => showWindow(id, `around=${encodeURIComponent(d.outline[el.dataset.i].uuid)}&before=2&limit=60`));
+}
+
+function messageHtml(m, focus) {
+  const body = m.role === "assistant" ? md(m.text) : esc(m.text);
+  return `<div class="msg ${esc(m.role)} ${focus ? "focus" : ""}"><div class="head"><span class="role">${esc(m.role)}</span><span>${esc(m.time)}</span></div><div class="text">${body}</div></div>`;
+}
+
+async function showWindow(id, query) {
+  const d = await api(`/api/session?id=${encodeURIComponent(id)}&${query}`);
+  let start = d.start, end = d.start + d.messages.length;
+  panel.innerHTML = panelHead(d.session, d.total, `<span class="right"><button class="btn" id="outline">All prompts</button></span>`) +
+    `<div class="pbody" id="pbody"><button class="btn more" id="earlier">Earlier</button><div id="msgs">${d.messages.map((m, i) => messageHtml(m, i === d.focus)).join("")}</div><button class="btn more" id="later">Later</button></div>`;
+  const body = $("#pbody"), msgs = $("#msgs"), earlier = $("#earlier"), later = $("#later");
+  const sync = () => { earlier.style.display = start > 0 ? "" : "none"; later.style.display = end < d.total ? "" : "none"; };
+  const wire = () => msgs.querySelectorAll(".msg.thinking, .msg.tool").forEach(el => el.onclick = () => el.classList.toggle("open"));
+  $("#x").onclick = closePanel;
+  $("#outline").onclick = () => showOutline(id);
+  earlier.onclick = async () => {
+    const from = Math.max(0, start - 40);
+    const more = await api(`/api/session?id=${encodeURIComponent(id)}&from=${from}&limit=${start - from}`);
+    const h = body.scrollHeight;
+    msgs.insertAdjacentHTML("afterbegin", more.messages.map(m => messageHtml(m)).join(""));
+    body.scrollTop += body.scrollHeight - h;
+    start = from; sync(); wire();
+  };
+  later.onclick = async () => {
+    const more = await api(`/api/session?id=${encodeURIComponent(id)}&from=${end}&limit=50`);
+    msgs.insertAdjacentHTML("beforeend", more.messages.map(m => messageHtml(m)).join(""));
+    end += more.messages.length; sync(); wire();
+  };
+  sync(); wire();
+  const f = $(".msg.focus", msgs);
+  if (f) f.scrollIntoView({ block: "center" });
+}
+
+// ---------- start ----------
+api("/api/info").then(i => {
+  $("#stats").textContent = `${i.sessions} sessions · ${big(i.messages)} messages · ${(i.bytes / 1e6).toFixed(0)} MB`;
+}).catch(() => {});
+route();
+</script>
+</body>
+</html>

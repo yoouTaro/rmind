@@ -5,6 +5,7 @@
 //! Sessions stay in the index after Claude Code deletes their logs (it
 //! cleans up old ones after a while), so your history only grows.
 
+use crate::forge::{Run, Suggestion};
 use crate::parse::{self, Role};
 use crate::price;
 use chrono::{DateTime, Local};
@@ -16,7 +17,7 @@ use std::time::{Duration, UNIX_EPOCH};
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Bump when the schema or what gets indexed changes; the index is rebuilt.
-const VERSION: i64 = 3;
+const VERSION: i64 = 4;
 
 const SCHEMA: &str = "
 CREATE TABLE files (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, size INTEGER NOT NULL);
@@ -48,8 +49,29 @@ CREATE INDEX usage_session ON usage (session);
 CREATE INDEX usage_day ON usage (day);
 ";
 
+/// Forge's suggestions are yours, so they live outside the index proper and
+/// survive rebuilds.
+const FORGE_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS forge (
+    id INTEGER PRIMARY KEY, created TEXT NOT NULL, kind TEXT NOT NULL, scope TEXT NOT NULL, project TEXT NOT NULL,
+    title TEXT NOT NULL, why TEXT NOT NULL, evidence TEXT NOT NULL, content TEXT NOT NULL, skill_name TEXT NOT NULL,
+    status TEXT NOT NULL, target TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS forge_runs (ts TEXT NOT NULL, suggestions INTEGER NOT NULL, cost REAL NOT NULL, error TEXT);
+";
+
 pub struct Db {
     conn: Connection,
+}
+
+/// One indexed message with its session's folder, for mining.
+pub struct TextRow {
+    pub session: String,
+    pub uuid: String,
+    pub cwd: String,
+    pub ts: String,
+    pub role: String,
+    pub text: String,
 }
 
 #[derive(Debug, Default)]
@@ -133,6 +155,7 @@ impl Db {
             conn.execute_batch(SCHEMA)?;
             conn.pragma_update(None, "user_version", VERSION)?;
         }
+        conn.execute_batch(FORGE_SCHEMA)?;
         Ok(Db { conn })
     }
 
@@ -250,9 +273,14 @@ impl Db {
             })
         })?;
         let mut per_session: HashMap<String, usize> = HashMap::new();
+        // Forked and resumed sessions repeat earlier messages under the same id.
+        let mut seen = std::collections::HashSet::new();
         let mut hits = Vec::new();
         for hit in rows {
             let hit = hit?;
+            if !seen.insert(format!("{}{}", hit.uuid, hit.role)) {
+                continue;
+            }
             let n = per_session.entry(hit.session.clone()).or_default();
             if *n < 2 {
                 *n += 1;
@@ -336,6 +364,106 @@ impl Db {
             .collect::<rusqlite::Result<_>>()?;
         Ok(UsageReport { since, cost, sessions, projects, models, days, top })
     }
+}
+
+impl Db {
+    /// Every prompt, reply and command, session by session, in order.
+    pub fn all_text(&self) -> Result<Vec<TextRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.session, m.uuid, s.cwd, m.ts, m.role, m.text FROM msgs m JOIN sessions s ON s.id = m.session
+             WHERE m.role IN ('user', 'assistant', 'tool') ORDER BY m.session, m.id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(TextRow { session: r.get(0)?, uuid: r.get(1)?, cwd: r.get(2)?, ts: r.get(3)?, role: r.get(4)?, text: r.get(5)? })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Folders with at least `min` sessions, busiest first.
+    pub fn busy_projects(&self, min: i64) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT cwd FROM sessions GROUP BY cwd HAVING COUNT(*) >= ?1 ORDER BY COUNT(*) DESC")?;
+        let rows = stmt.query_map([min], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn add_suggestion(&self, s: &Suggestion) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO forge (created, kind, scope, project, title, why, evidence, content, skill_name, status, target)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                s.created,
+                s.kind,
+                s.scope,
+                s.project,
+                s.title,
+                s.why,
+                serde_json::to_string(&s.evidence)?,
+                s.content,
+                s.skill_name,
+                s.status,
+                s.target
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Suggestions, newest first; `status` keeps only those.
+    pub fn suggestions(&self, status: Option<&str>) -> Result<Vec<Suggestion>> {
+        let mut stmt = self.conn.prepare(&format!("{FORGE_COLUMNS} WHERE ?1 IS NULL OR status = ?1 ORDER BY id DESC"))?;
+        let rows = stmt.query_map([status], suggestion)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn suggestion(&self, id: i64) -> Result<Option<Suggestion>> {
+        Ok(self.conn.query_row(&format!("{FORGE_COLUMNS} WHERE id = ?1"), [id], suggestion).optional()?)
+    }
+
+    pub fn set_suggestion(&self, id: i64, status: &str, content: &str, target: &str) -> Result<()> {
+        self.conn.execute("UPDATE forge SET status = ?2, content = ?3, target = ?4 WHERE id = ?1", params![id, status, content, target])?;
+        Ok(())
+    }
+
+    pub fn add_run(&self, run: &Run) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO forge_runs (ts, suggestions, cost, error) VALUES (?1, ?2, ?3, ?4)",
+            params![run.ts, run.suggestions, run.cost, run.error],
+        )?;
+        Ok(())
+    }
+
+    pub fn last_run(&self) -> Result<Option<Run>> {
+        Ok(self
+            .conn
+            .query_row("SELECT ts, suggestions, cost, error FROM forge_runs ORDER BY ts DESC LIMIT 1", [], |r| {
+                Ok(Run { ts: r.get(0)?, suggestions: r.get(1)?, cost: r.get(2)?, error: r.get(3)? })
+            })
+            .optional()?)
+    }
+
+    /// Sessions and messages indexed.
+    pub fn counts(&self) -> Result<(i64, i64)> {
+        Ok(self.conn.query_row("SELECT (SELECT COUNT(*) FROM sessions), (SELECT COUNT(*) FROM msgs)", [], |r| Ok((r.get(0)?, r.get(1)?)))?)
+    }
+}
+
+const FORGE_COLUMNS: &str = "SELECT id, created, kind, scope, project, title, why, evidence, content, skill_name, status, target FROM forge";
+
+fn suggestion(r: &rusqlite::Row) -> rusqlite::Result<Suggestion> {
+    let evidence: String = r.get(7)?;
+    Ok(Suggestion {
+        id: r.get(0)?,
+        created: r.get(1)?,
+        kind: r.get(2)?,
+        scope: r.get(3)?,
+        project: r.get(4)?,
+        title: r.get(5)?,
+        why: r.get(6)?,
+        evidence: serde_json::from_str(&evidence).unwrap_or_default(),
+        content: r.get(8)?,
+        skill_name: r.get(9)?,
+        status: r.get(10)?,
+        target: r.get(11)?,
+    })
 }
 
 const SESSION_COLUMNS: &str = "SELECT id, title, cwd, first_ts, last_ts, prompts, last_prompt,

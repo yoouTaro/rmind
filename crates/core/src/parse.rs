@@ -246,11 +246,11 @@ fn text_of(content: &Value) -> String {
 }
 
 /// What you typed, without the context Claude Code adds around it.
-/// Slash commands become `/name args`; notes about local commands and
-/// their output are dropped.
+/// Slash commands become `/name args`; notes about local commands, their
+/// output and background-task notifications are dropped.
 fn prompt(text: &str) -> String {
     let text = strip_tag(text, "system-reminder");
-    if text.contains("<local-command-caveat>") || text.contains("<local-command-stdout>") {
+    if text.contains("<local-command-caveat>") || text.contains("<local-command-stdout>") || text.trim_start().starts_with("<task-notification>") {
         return String::new();
     }
     if let Some(name) = between(&text, "<command-name>", "</command-name>") {
@@ -342,6 +342,7 @@ mod tests {
     fn slash_commands_and_local_output() {
         assert_eq!(prompt("<command-name>/compact</command-name>\n<command-args></command-args>"), "/compact");
         assert_eq!(prompt("<local-command-stdout>Compacted</local-command-stdout>"), "");
+        assert_eq!(prompt("<task-notification><status>stopped</status></task-notification>"), "");
         assert_eq!(strip_tag("a<x>b</x>c<x>d", "x"), "ac");
     }
 

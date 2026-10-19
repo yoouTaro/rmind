@@ -2,12 +2,25 @@
 //! through the MCP tools.
 
 use rmind_core::db::{Hit, Message, SessionInfo, UsageReport, local_time};
+use rmind_core::forge::Suggestion;
 use rmind_core::parse::clip;
 use std::fmt::Write;
 
-/// The folder's name, which is usually the project's.
-pub fn project(cwd: &str) -> &str {
-    cwd.trim_end_matches('/').rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(cwd)
+/// The folder's name, which is usually the project's. Scratch folders
+/// named `2026-10-16-<what you asked>-<hash>` keep just what you asked.
+pub fn project(cwd: &str) -> String {
+    let name = cwd.trim_end_matches('/').rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(cwd);
+    let dated = name.len() > 11 && name.as_bytes()[..10].iter().enumerate().all(|(i, b)| if i == 4 || i == 7 { *b == b'-' } else { b.is_ascii_digit() });
+    if !dated {
+        return name.to_string();
+    }
+    let rest = &name[11..];
+    let rest = match rest.rsplit_once('-') {
+        Some((head, hash)) if hash.len() >= 6 && hash.chars().all(|c| c.is_ascii_hexdigit()) => head,
+        _ => rest,
+    };
+    let rest = if rest.is_empty() { "scratch" } else { rest };
+    clip(rest, 36)
 }
 
 pub fn hits(query: &str, hits: &[Hit]) -> String {
@@ -124,6 +137,27 @@ pub fn usage(r: &UsageReport, days: u32) -> String {
     out
 }
 
+pub fn suggestions(list: &[Suggestion]) -> String {
+    if list.is_empty() {
+        return "No open suggestions. Run `rmind forge` to make some.\n".into();
+    }
+    let mut out = String::new();
+    for s in list {
+        let place = if s.scope == "project" { s.project.as_str() } else { "global" };
+        let _ = writeln!(out, "#{} {} · {} · {}", s.id, s.kind, place, s.title);
+        let _ = writeln!(out, "   why: {}", one_line(&s.why));
+        for e in s.evidence.iter().take(3) {
+            let _ = writeln!(out, "   > {}", one_line(&clip(e, 160)));
+        }
+        for line in s.content.lines().take(12) {
+            let _ = writeln!(out, "   | {line}");
+        }
+        out.push('\n');
+    }
+    out.push_str("Accept with `rmind accept <id>`, drop with `rmind dismiss <id>`, or review in `rmind ui`.\n");
+    out
+}
+
 fn cost(c: Option<f64>) -> String {
     c.map(|c| format!(" · ${c:.2}")).unwrap_or_default()
 }
@@ -139,4 +173,14 @@ fn big(n: i64) -> String {
 
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn project_names() {
+        assert_eq!(super::project("/Users/lucy/Main/2.Project/rgrip"), "rgrip");
+        assert_eq!(super::project("/Users/lucy/.t3/scratch/2026-10-17-my-disk-seem-to-low-2c776614"), "my-disk-seem-to-low");
+        assert_eq!(super::project("/x/scratch-2026-10-05-a9e430"), "scratch-2026-10-05-a9e430");
+    }
 }

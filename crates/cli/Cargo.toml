@@ -9,3 +9,4 @@ description.workspace = true
 rmind-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+tiny_http = "0.12"

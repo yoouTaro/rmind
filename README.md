@@ -14,6 +14,12 @@ SQLite full-text index, then:
   sessions in the same folder.
 - **Usage** – cost by day, project and model (at API prices, subagents
   included), cache hit rate, priciest sessions.
+- **Forge** – finds what you keep repeating or correcting (what you said
+  right after interrupting Claude, "no, …", prompts you repeat, each
+  project's commands) and asks Claude (Sonnet, one call, a few cents) to draft
+  CLAUDE.md rules and skills. Nothing is written until you accept one.
+- **UI** – `rmind ui` opens all of it in your browser: search, sessions,
+  usage charts, and Forge suggestions to edit, accept or dismiss.
 
 Sessions stay in the index after Claude Code cleans up old logs.
 
@@ -35,7 +41,13 @@ rmind search objc2 RefCell borrow     # -p rsnap to filter by project
 rmind show <session> --around <message>
 rmind recent
 rmind usage --days 30
+rmind ui                              # the window: search, sessions, usage, Forge
+rmind forge                           # draft suggestions; rmind forge --evidence shows what it mined
+rmind accept <id> / rmind dismiss <id>
 ```
+
+The UI is served on 127.0.0.1 only, and its API needs a token that's only in
+the page, so other websites can't use it.
 
 Nothing to run in the background: Claude Code starts `rmind mcp` for each
 session, the SessionEnd hook indexes the session that just closed, and every
