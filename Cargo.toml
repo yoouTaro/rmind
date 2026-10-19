@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/cli"]
+
+[workspace.package]
+version = "0.0.1-alpha"
+edition = "2024"
+license = "MIT"
+description = "Search, usage stats and memory over your Claude Code history."
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
