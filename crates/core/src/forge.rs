@@ -536,7 +536,7 @@ pub fn accept(db: &Db, id: i64, content: Option<&str>) -> Result<PathBuf> {
             }
         }
         std::fs::create_dir_all(path.parent().ok_or("bad path")?)?;
-        std::fs::write(&path, format!("{}\n", s.content))?;
+        write_keeping_mode(&path, &format!("{}\n", s.content))?;
     } else {
         let mut text = std::fs::read_to_string(&path).unwrap_or_default();
         if !text.contains(HEADING) {
@@ -550,15 +550,43 @@ pub fn accept(db: &Db, id: i64, content: Option<&str>) -> Result<PathBuf> {
         }
         text.push_str(&s.content);
         text.push('\n');
-        std::fs::write(&path, text)?;
+        write_keeping_mode(&path, &text)?;
     }
     db.set_suggestion(id, "accepted", &s.content, &path.to_string_lossy())?;
     Ok(path)
 }
 
+/// Write `path`, even if it's read-only, and keep its permissions as they
+/// were (a file you locked stays locked).
+fn write_keeping_mode(path: &Path, text: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = std::fs::metadata(path) else {
+        std::fs::write(path, text)?;
+        return Ok(());
+    };
+    let mode = meta.permissions().mode();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o200))?;
+    let written = std::fs::write(path, text);
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+    Ok(written?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_locked_files_and_keeps_them_locked() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("rmind-locked-{}.md", std::process::id()));
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        write_keeping_mode(&path, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o444);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn programs_skip_lookups() {
