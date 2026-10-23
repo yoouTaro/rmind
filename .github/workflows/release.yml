@@ -1,0 +1,37 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build both architectures
+        run: |
+          cargo build --release -p rmind --target aarch64-apple-darwin
+          cargo build --release -p rmind --target x86_64-apple-darwin
+
+      - name: Package universal binary
+        run: |
+          lipo -create -output rmind \
+            target/aarch64-apple-darwin/release/rmind \
+            target/x86_64-apple-darwin/release/rmind
+          tar -czf "rmind-${GITHUB_REF_NAME}-macos-universal.tar.gz" rmind
+          shasum -a 256 "rmind-${GITHUB_REF_NAME}-macos-universal.tar.gz" > checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rmind-*-macos-universal.tar.gz
+            checksums.txt
